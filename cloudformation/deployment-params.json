@@ -1,0 +1,20 @@
+[
+    { "ParameterKey":"ProjectName",         "ParameterValue":"GPT2 Flask API" },
+    { "ParameterKey":"BucketName",          "ParameterValue":"devopstar" },
+    { "ParameterKey":"ClassB",              "ParameterValue":"160" },
+    { "ParameterKey":"ClusterName",         "ParameterValue":"gpt-2-flask-cluster" },
+    { "ParameterKey":"CodeRepositoryURL",   "ParameterValue":"https://github.com/t04glovern/gpt-2-flask-api" },
+
+    { "ParameterKey":"ServiceName",         "ParameterValue":"gpt-2-flask-api" },
+    { "ParameterKey":"ContainerName",       "ParameterValue":"gpt-2-flask-api" },
+    { "ParameterKey":"ContainerPort",       "ParameterValue":"5000" },
+    { "ParameterKey":"ContainerCpu",        "ParameterValue":"2048" },
+    { "ParameterKey":"ContainerMemory",     "ParameterValue":"8192" },
+    { "ParameterKey":"DesiredCount",        "ParameterValue":"1" },
+    { "ParameterKey":"HealthEndpoint",      "ParameterValue":"/" },
+
+    { "ParameterKey":"BuildspecLocation",   "ParameterValue":"buildspec.yml" },
+    { "ParameterKey":"EnvironmentType",     "ParameterValue":"LINUX_CONTAINER" },
+    { "ParameterKey":"ComputeType",         "ParameterValue":"BUILD_GENERAL1_SMALL" },
+    { "ParameterKey":"BuildImage",          "ParameterValue":"aws/codebuild/ubuntu-base:14.04" }
+]

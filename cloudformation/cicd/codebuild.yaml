@@ -1,0 +1,190 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Codebuild Template for building from GitHub Source
+
+Parameters:
+
+  VPC:
+    Description: VPC to operate in
+    Type: 'AWS::EC2::VPC::Id'
+  SubnetIDs:
+    Description: Subnet IDs that is a List of Subnet Id
+    Type: 'List<AWS::EC2::Subnet::Id>'
+
+  FargateCluster:
+    Description: Fargate cluster where this task runs
+    Type: String
+  FargateService:
+    Description: Fargate service where the image is run from
+    Type: String
+
+  CodeRepositoryURL:
+    Description: URL of the repo which contains CFN template.
+    Type: String
+  BuildspecLocation:
+    Description: Location of buildspec configuration
+    Type: String
+  ImageRepoName:
+    Description: Container Repository name (just the end bit)
+    Type: String
+  EnvironmentType:
+    Description: Type of build environment to use for related builds.
+    Type: String
+    AllowedValues:
+      - WINDOWS_CONTAINER
+      - LINUX_CONTAINER
+  ComputeType:
+    Description: Compute resources the build project will use to build.
+    Type: String
+    AllowedValues:
+      - BUILD_GENERAL1_SMALL
+      - BUILD_GENERAL1_MEDIUM
+      - BUILD_GENERAL1_LARGE
+  BuildImage:
+    Description: >-
+      System Image identifier of the image to use for code build
+      (https://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-available.html)
+    Type: String
+
+Resources:
+
+  codeBuildSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Basic Security group for codebuild
+      VpcId: !Ref VPC
+
+  codeBuildServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: codebuild
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !Sub >-
+                  arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                  - 's3:GetObject'
+                  - 's3:GetObjectVersion'
+                Resource: !Sub 'arn:aws:s3:::codepipeline-${AWS::Region}-*'
+              - Effect: Allow
+                Action:
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:CompleteLayerUpload'
+                  - 'ecr:GetAuthorizationToken'
+                  - 'ecr:InitiateLayerUpload'
+                  - 'ecr:PutImage'
+                  - 'ecr:UploadLayerPart'
+                  - 'ecs:UpdateService'
+                Resource: '*'
+        - PolicyName: codebuild-vpc
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ec2:CreateNetworkInterface'
+                  - 'ec2:DescribeDhcpOptions'
+                  - 'ec2:DescribeNetworkInterfaces'
+                  - 'ec2:DeleteNetworkInterface'
+                  - 'ec2:DescribeSubnets'
+                  - 'ec2:DescribeSecurityGroups'
+                  - 'ec2:DescribeVpcs'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'ec2:CreateNetworkInterfacePermission'
+                Condition:
+                  StringEquals:
+                    'ec2:Subnet':
+                      - !Join
+                        - ''
+                        - - 'arn:aws:ec2:'
+                          - !Ref 'AWS::Region'
+                          - ':'
+                          - !Ref 'AWS::AccountId'
+                          - ':subnet/'
+                          - !Select
+                            - '0'
+                            - !Ref SubnetIDs
+                      - !Join
+                        - ''
+                        - - 'arn:aws:ec2:'
+                          - !Ref 'AWS::Region'
+                          - ':'
+                          - !Ref 'AWS::AccountId'
+                          - ':subnet/'
+                          - !Select
+                            - '1'
+                            - !Ref SubnetIDs
+                    'ec2:AuthorizedService': codebuild.amazonaws.com
+                Resource: !Sub >-
+                  arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*
+              - Effect: Allow
+                Action:
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:CompleteLayerUpload'
+                  - 'ecr:GetAuthorizationToken'
+                  - 'ecr:InitiateLayerUpload'
+                  - 'ecr:PutImage'
+                  - 'ecr:UploadLayerPart'
+                Resource: !Sub >-
+                  arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ImageRepoName}
+
+  codeBuildProject:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Source:
+        Location: !Ref CodeRepositoryURL
+        Type: GITHUB
+        Auth:
+          Type: OAUTH
+        BuildSpec: !Ref BuildspecLocation
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Cache:
+        Type: NO_CACHE
+      Environment:
+        ComputeType: !Ref ComputeType
+        Image: !Ref BuildImage
+        Type: !Ref EnvironmentType
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Value: !Sub '${AWS::Region}'
+          - Name: AWS_ACCOUNT_ID
+            Value: !Sub '${AWS::AccountId}'
+          - Name: IMAGE_REPO_NAME
+            Value: !Ref ImageRepoName
+          - Name: IMAGE_TAG
+            Value: latest
+          - Name: FARGATE_CLUSTER
+            Value: !Ref FargateCluster
+          - Name: FARGATE_SERVICE
+            Value: !Ref FargateService
+        PrivilegedMode: true
+      VpcConfig:
+        VpcId: !Ref VPC
+        Subnets: !Ref SubnetIDs
+        SecurityGroupIds:
+          - !Ref codeBuildSecurityGroup
+      Name: !Sub '${ImageRepoName}-cb'
+      Description: !Sub 'CodeBuild for ${ImageRepoName}'
+      EncryptionKey: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/s3'
+      ServiceRole: !Ref codeBuildServiceRole
+      TimeoutInMinutes: 60
+      BadgeEnabled: true

@@ -1,0 +1,233 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Nested Fargate Stack deployment
+
+Metadata:
+
+  Authors:
+    Description: Nathan Glover (nathan@glovers.id.au)
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Project Information
+      Parameters:
+        - ProjectName
+        - BucketName
+
+    - Label:
+        default: Networking Resources
+      Parameters:
+        - ClassB
+
+    - Label:
+        default: Base Fargate Cluster
+      Parameters:
+        - ClusterName
+
+    - Label:
+        default: Fargate Service
+      Parameters:
+        - ServiceName
+        - ContainerName
+        - ContainerPort
+        - ContainerCpu
+        - ContainerMemory
+        - DesiredCount
+        - HealthEndpoint
+
+    - Label:
+        default: Codebuild Base
+      Parameters:
+        - CodeRepositoryURL
+
+    - Label:
+        default: Codebuild Service
+      Parameters:
+        - BuildspecLocation
+        - EnvironmentType
+        - ComputeType
+        - BuildImage
+
+    ParameterLabels:
+      ProjectName:
+        default: Project Name
+      BucketName:
+        default: Bucket Name
+
+      ClassB:
+        default: (10.XXX.0.0/16)
+
+      ClusterName:
+        default: Cluster Name
+
+      ServiceName:
+        default: Service Name
+      ContainerName:
+        default: Docker Image Name
+      ContainerPort:
+        default: Container Port
+      ContainerCpu:
+        default: Container Cpu
+      ContainerMemory:
+        default: Container Memory
+      DesiredCount:
+        default: Number of Tasks
+      HealthEndpoint:
+        default: Health Check Endpoint
+
+      CodeRepositoryURL:
+        default: Git Repo URL
+
+      BuildspecLocation:
+        default: buildspec file
+      EnvironmentType:
+        default: Build OS
+      ComputeType:
+        default: Build Resource
+      BuildImage:
+        default: Build Image
+
+Parameters:
+
+  ProjectName:
+    Description: Project Name (used for Tagging)
+    Type: String
+  BucketName:
+    Description: Bucket name where nested templates live
+    Type: String
+
+  ClassB:
+    Description: Class B of VPC (10.XXX.0.0/16)
+    Type: Number
+
+  ClusterName:
+    Description: Fargate Cluster Name (will be exported for use with resources in this project)
+    Type: String
+
+  ServiceName:
+    Type: String
+    Description: Name given to the service being run on the Fargate Cluster
+  ContainerName:
+    Type: String
+    Description: The name of a docker image that should be run from ECR
+  ContainerPort:
+    Type: Number
+    Description: What port number the application inside the docker container
+  ContainerCpu:
+    Type: Number
+    Description: How much CPU to give the container. 1024 is 1 CPU
+  ContainerMemory:
+    Type: Number
+    Description: How much memory in megabytes to give the container
+  DesiredCount:
+    Type: Number
+    Description: How many copies of the service task to run
+  HealthEndpoint:
+    Type: String
+    Description: Health Endpoint to target via Application load balancer health checks
+
+  CodeRepositoryURL:
+    Description: URL of the repo which contains CFN template.
+    Type: String
+
+  BuildspecLocation:
+    Description: Location of buildspec configuration
+    Type: String
+  EnvironmentType:
+    Description: Type of build environment to use for related builds.
+    Type: String
+    AllowedValues:
+      - WINDOWS_CONTAINER
+      - LINUX_CONTAINER
+  ComputeType:
+    Description: Compute resources the build project will use to build.
+    Type: String
+    AllowedValues:
+      - BUILD_GENERAL1_SMALL
+      - BUILD_GENERAL1_MEDIUM
+      - BUILD_GENERAL1_LARGE
+  BuildImage:
+    Description: System Image identifier of the image to use for code build
+    Type: String
+
+Resources:
+
+  baseFargate:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        ProjectName:
+          !Ref ProjectName
+        ClusterName:
+          !Ref ClusterName
+      TemplateURL: !Sub 'https://s3.amazonaws.com/${BucketName}/resources/gpt-2-flask-api/cloudformation/base/fargate-cluster.yaml'
+
+  baseNetworking:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        ClassB:
+          !Ref ClassB
+      TemplateURL: !Sub 'https://s3.amazonaws.com/${BucketName}/resources/gpt-2-flask-api/cloudformation/base/vpc-networking.yaml'
+
+  service:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        ServiceName:
+          !Ref ServiceName
+        VPCId:
+          !GetAtt [ baseNetworking, Outputs.VPC ]
+        PublicSubnetIDs:
+          !GetAtt [ baseNetworking, Outputs.SubnetsPublic ]
+        PrivateSubnetIDs:
+          !GetAtt [ baseNetworking, Outputs.SubnetsPrivate ]
+        FargateCluster:
+          !GetAtt [ baseFargate, Outputs.FargateCluster ]
+        ContainerName:
+          !Ref ContainerName
+        ContainerPort:
+          !Ref ContainerPort
+        ContainerCpu:
+          !Ref ContainerCpu
+        ContainerMemory:
+          !Ref ContainerMemory
+        DesiredCount:
+          !Ref DesiredCount
+        HealthEndpoint:
+          !Ref HealthEndpoint
+      TemplateURL: !Sub 'https://s3.amazonaws.com/${BucketName}/resources/gpt-2-flask-api/cloudformation/base/fargate-service.yaml'
+
+  codebuild:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        VPC:
+          !GetAtt [ baseNetworking, Outputs.VPC ]
+        SubnetIDs:
+          !GetAtt [ baseNetworking, Outputs.SubnetsPrivate ]
+        FargateCluster:
+          !GetAtt [ baseFargate, Outputs.FargateCluster ]
+        FargateService:
+          !Ref ServiceName
+        CodeRepositoryURL:
+          !Ref CodeRepositoryURL
+        BuildspecLocation:
+          !Ref BuildspecLocation
+        ImageRepoName:
+          !Ref ContainerName
+        EnvironmentType:
+          !Ref EnvironmentType
+        ComputeType:
+          !Ref ComputeType
+        BuildImage:
+          !Ref BuildImage
+      TemplateURL: !Sub 'https://s3.amazonaws.com/${BucketName}/resources/gpt-2-flask-api/cloudformation/cicd/codebuild.yaml'
+
+Outputs:
+
+  ApiEndpoint:
+    Description: API Endpoint for the Service
+    Value: !GetAtt [ service, Outputs.EndpointUrl ]

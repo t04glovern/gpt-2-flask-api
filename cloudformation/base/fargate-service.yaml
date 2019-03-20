@@ -1,0 +1,235 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Deploy a service on AWS Fargate
+
+Parameters:
+
+  ServiceName:
+    Type: String
+    Description: A name for the service
+
+  VPCId:
+    Type: 'AWS::EC2::VPC::Id'
+    Description: VPC that should house this cluster
+  PublicSubnetIDs:
+    Type: 'List<AWS::EC2::Subnet::Id>'
+    Description: Subnet IDs for the ALB
+  PrivateSubnetIDs:
+    Type: 'List<AWS::EC2::Subnet::Id>'
+    Description: Subnet IDs for the Fargate Containers
+  FargateCluster:
+    Type: String
+    Description: Fargate Cluster for this service to run on
+
+  ContainerName:
+    Type: String
+    Description: The name of a docker image that should be run from ECR
+  ContainerPort:
+    Type: Number
+    Description: What port number the application inside the docker container
+  ContainerCpu:
+    Type: Number
+    Description: How much CPU to give the container. 1024 is 1 CPU
+  ContainerMemory:
+    Type: Number
+    Description: How much memory in megabytes to give the container
+
+  DesiredCount:
+    Type: Number
+    Description: How many copies of the service task to run
+  HealthEndpoint:
+    Type: String
+    Description: Health Endpoint to target via Application load balancer health checks
+
+Resources:
+
+  fargateTaskExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: logs
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+        - PolicyName: ecr
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:GetDownloadUrlForLayer'
+                  - 'ecr:BatchGetImage'
+                Resource: !Join
+                  - ''
+                  - - 'arn:aws:ecr:'
+                    - !Ref 'AWS::Region'
+                    - ':'
+                    - !Ref 'AWS::AccountId'
+                    - ':repository/'
+                    - !Ref ContainerName
+              - Effect: Allow
+                Action:
+                  - 'ecr:GetAuthorizationToken'
+                Resource: '*'
+
+  fargateLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /fargate/${AWS::StackName}
+      RetentionInDays: 7
+
+  fargateTaskDefinition:
+    Type: 'AWS::ECS::TaskDefinition'
+    Properties:
+      Family: !Sub '${ServiceName}-task'
+      Cpu: !Ref ContainerCpu
+      Memory: !Ref ContainerMemory
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !Ref fargateTaskExecutionRole
+      ContainerDefinitions:
+        - Name: !Sub '${ServiceName}'
+          Cpu: !Ref ContainerCpu
+          Memory: !Ref ContainerMemory
+          Image: !Join
+                  - ''
+                  - - !Ref 'AWS::AccountId'
+                    - '.dkr.ecr.'
+                    - !Ref 'AWS::Region'
+                    - '.amazonaws.com/'
+                    - !Ref ContainerName
+                    - ':latest'
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+          EntryPoint:
+            - /opt/conda/envs/ml-flask/bin/python
+            - run_server.py
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref fargateLogGroup
+              awslogs-stream-prefix: !Ref AWS::StackName
+
+  fargateContainerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Access to the Fargate containers
+      SecurityGroupIngress:
+        - Description: Container port
+          IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          SourceSecurityGroupId: !Ref loadBalancerSecurityGroup
+      VpcId: !Ref VPCId
+
+  fargateService:
+    Type: 'AWS::ECS::Service'
+    DependsOn:
+      - httpLoadBalancerListener
+    Properties:
+      ServiceName: !Sub '${ServiceName}-service'
+      Cluster: !Ref FargateCluster
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 75
+      DesiredCount: !Ref DesiredCount
+      HealthCheckGracePeriodSeconds: 60
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref fargateContainerSecurityGroup
+          Subnets: !Ref PrivateSubnetIDs
+      TaskDefinition: !Ref fargateTaskDefinition
+      LoadBalancers:
+        - ContainerName: !Sub '${ServiceName}'
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref targetGroup
+
+  loadBalancerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Access to the frontend loadbalancer
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          Description: HTTP Web Port from Load Balancer
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+      VpcId: !Ref VPCId
+
+  loadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Name: !Join
+        - '-'
+        - - !Ref ServiceName
+          - lb
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '120'
+      SecurityGroups:
+        - !Ref loadBalancerSecurityGroup
+      Subnets: !Ref PublicSubnetIDs
+
+  httpLoadBalancerListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref targetGroup
+          Type: forward
+      LoadBalancerArn: !Ref loadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  targetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckIntervalSeconds: 6
+      HealthCheckPath: !Ref HealthEndpoint
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      TargetType: ip
+      Name: !Join
+        - '-'
+        - - !Ref ServiceName
+          - fwd
+      Port: !Ref ContainerPort
+      Protocol: HTTP
+      UnhealthyThresholdCount: 2
+      VpcId: !Ref VPCId
+
+Outputs:
+
+  LoadBalancerDNSName:
+    Description: DNS name for the created loadbalancer.
+    Value: !GetAtt
+      - loadBalancer
+      - DNSName
+
+  EndpointUrl:
+    Description: Request URL for the API endpoint
+    Value: !Join
+      - ''
+      - - !GetAtt
+          - loadBalancer
+          - DNSName
+        - '/'
