@@ -1,6 +1,6 @@
 # GPT-2 Flask API
 
-Learning about and doing projects with recurrent neural networks
+OpenAI GPT-2 Flask API
 
 First, before anything else download the model
 
