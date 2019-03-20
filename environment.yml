@@ -1,0 +1,10 @@
+dependencies:
+  - python==3.7
+  - pip:
+    - Flask==1.0.2
+    - torch==1.0.1
+    - regex==2017.4.5
+    - requests==2.21.0
+    - numpy==1.16.2
+    - wtforms==2.2.1
+    - tqdm==4.31.1

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>GPT-2 Gen</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+
+</head>
+
+<body>
+<div class="container">
+    <br/>
+
+    <h1>
+        Simple Text-Gen w/ OpenAI GPT-2
+    </h1>
+
+    {% block content %}
+        {% for message in form.seed.errors %}
+            <div class="flash">{{ message }}</div>
+        {% endfor %}
+
+        <form method=post>
+
+            {{ form.seed.label }}
+            {{ form.seed }}
+
+            {{ form.submit }}
+        </form>
+    {% endblock %}
+
+    <br/>
+</div>
+</body>
+
+</html>
