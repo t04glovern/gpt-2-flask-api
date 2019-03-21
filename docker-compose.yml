@@ -1,7 +1,7 @@
 version: '3.3'
 services:
   flask:
-    image: ml-flask
+    image: gpt-2-flask-api
     build: .
     command: /opt/conda/envs/ml-flask/bin/python run_server.py
     ports:

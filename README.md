@@ -1,6 +1,8 @@
 # GPT-2 Flask API
 
-OpenAI GPT-2 Flask API
+Containerising PyTorch models in a repeatable way. Deploy OpenAI's GPT-2 model and expose it over a Flask API. Finally deploy it to AWS Fargate container hosting using CloudFormation.
+
+![architecture](cloudformation/architecture.png)
 
 First, before anything else download the model
 
@@ -22,6 +24,13 @@ python3 -m venv ./venv
 source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
+```
+
+Then run the python flask server using the following
+
+```bash
+cd deployment
+python run_server.py
 ```
 
 ### docker-compose
